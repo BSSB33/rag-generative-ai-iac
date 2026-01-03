@@ -140,6 +140,7 @@ resource "aws_lambda_function" "summarize" {
   timeout          = 120
   memory_size      = 1024
   source_code_hash = data.archive_file.summarize.output_base64sha256
+  layers           = [aws_lambda_layer_version.pypdf.arn]
 
   environment {
     variables = {
@@ -152,4 +153,33 @@ resource "aws_lambda_function" "summarize" {
   tags = {
     Name = "${var.project_name}-summarize"
   }
+}
+
+# Lambda Layer for pypdf dependency
+# Automatically install dependencies before creating the layer
+resource "null_resource" "install_pypdf_dependencies" {
+  triggers = {
+    requirements = filemd5("${path.root}/lambda/layers/pypdf/requirements.txt")
+  }
+
+  provisioner "local-exec" {
+    command = "pip3 install -t ${path.root}/lambda/layers/pypdf/python -r ${path.root}/lambda/layers/pypdf/requirements.txt --upgrade"
+  }
+}
+
+data "archive_file" "pypdf_layer" {
+  type        = "zip"
+  source_dir  = "${path.root}/lambda/layers/pypdf"
+  output_path = "${path.root}/lambda/layers/pypdf.zip"
+
+  depends_on = [null_resource.install_pypdf_dependencies]
+}
+
+resource "aws_lambda_layer_version" "pypdf" {
+  filename            = data.archive_file.pypdf_layer.output_path
+  layer_name          = "${var.project_name}-pypdf"
+  source_code_hash    = data.archive_file.pypdf_layer.output_base64sha256
+  compatible_runtimes = ["python3.12"]
+
+  description = "pypdf library for PDF text extraction"
 }

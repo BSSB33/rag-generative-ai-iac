@@ -6,7 +6,9 @@ import json
 import os
 import logging
 import boto3
+import io
 from botocore.exceptions import ClientError
+from pypdf import PdfReader
 
 # Configure logging
 logger = logging.getLogger()
@@ -72,7 +74,39 @@ def lambda_handler(event, context):
                 Bucket=S3_BUCKET,
                 Key=document_name
             )
-            document_content = s3_response['Body'].read().decode('utf-8')
+            document_bytes = s3_response['Body'].read()
+
+            # Extract text based on file type
+            if document_name.lower().endswith('.pdf'):
+                logger.info("Processing PDF file")
+                pdf_file = io.BytesIO(document_bytes)
+                pdf_reader = PdfReader(pdf_file)
+
+                # Extract text from all pages
+                text_parts = []
+                for page_num, page in enumerate(pdf_reader.pages, 1):
+                    text = page.extract_text()
+                    if text.strip():
+                        text_parts.append(text)
+
+                document_content = '\n\n'.join(text_parts)
+
+                if not document_content.strip():
+                    return {
+                        'statusCode': 400,
+                        'headers': {
+                            'Content-Type': 'application/json',
+                            'Access-Control-Allow-Origin': '*'
+                        },
+                        'body': json.dumps({
+                            'error': 'Could not extract text from PDF'
+                        })
+                    }
+            else:
+                # Assume plain text file
+                logger.info("Processing text file")
+                document_content = document_bytes.decode('utf-8')
+
         except s3_client.exceptions.NoSuchKey:
             logger.error(f"Document not found: {document_name}")
             return {

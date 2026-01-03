@@ -41,3 +41,7 @@ Thumbs.db
 # Lambda deployment packages
 *.zip
 lambda/**/*.zip
+
+# Lambda layers - ignore installed dependencies
+lambda/layers/*/python/
+!lambda/layers/*/python/.gitkeep
