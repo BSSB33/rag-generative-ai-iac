@@ -14,9 +14,9 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = var.project_name
-      Environment = var.environment
-      ManagedBy   = "Terraform"
+      Project       = var.project_name
+      ManagedBy     = "Terraform"
+      cloud-resume  = "true"
     }
   }
 }
