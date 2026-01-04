@@ -1,0 +1,443 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RAG Generative AI Application - Infrastructure managed by Terraform'
+
+Metadata:
+  Infrastructure:
+    ManagedBy: Terraform
+    StateBackend: S3
+    StateLocation: vitraiaws-terraform-states/rag-generative-ai/terraform.tfstate
+    StateLocking: DynamoDB
+    StateLockTable: terraform-state-locks
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: vitraiaws-rag
+    Description: Project name for resource naming
+
+  Region:
+    Type: String
+    Default: eu-west-1
+    Description: AWS region for deployment
+
+Resources:
+  # ==================== S3 DOCUMENT STORAGE ====================
+  DocumentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-documents'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # ==================== OPENSEARCH SERVERLESS COLLECTION ====================
+  OpenSearchServerlessCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    Properties:
+      Name: !Sub '${ProjectName}-kb'
+      Type: VECTORSEARCH
+      Description: Vector database for RAG Knowledge Base
+
+  OpenSearchServerlessEncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-encryption'
+      Type: encryption
+      Description: Encryption policy for Knowledge Base collection
+      Policy: !Sub |
+        {
+          "Rules": [
+            {
+              "ResourceType": "collection",
+              "Resource": ["collection/${ProjectName}-kb"]
+            }
+          ],
+          "AWSOwnedKey": true
+        }
+
+  OpenSearchServerlessNetworkPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-network'
+      Type: network
+      Description: Network policy for Knowledge Base collection
+      Policy: !Sub |
+        [
+          {
+            "Rules": [
+              {
+                "ResourceType": "collection",
+                "Resource": ["collection/${ProjectName}-kb"]
+              }
+            ],
+            "AllowFromPublic": true
+          }
+        ]
+
+  OpenSearchServerlessDataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: !Sub '${ProjectName}-data-access'
+      Type: data
+      Description: Data access policy for Knowledge Base
+      Policy: !Sub |
+        [
+          {
+            "Rules": [
+              {
+                "ResourceType": "collection",
+                "Resource": ["collection/${ProjectName}-kb"],
+                "Permission": ["aoss:*"]
+              },
+              {
+                "ResourceType": "index",
+                "Resource": ["index/${ProjectName}-kb/*"],
+                "Permission": ["aoss:*"]
+              }
+            ],
+            "Principal": ["arn:aws:iam::${AWS::AccountId}:role/${BedrockKnowledgeBaseRole}"]
+          }
+        ]
+
+  # ==================== BEDROCK KNOWLEDGE BASE ====================
+  BedrockKnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-bedrock-kb'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref BedrockKnowledgeBaseS3Policy
+        - !Ref BedrockKnowledgeBaseOpenSearchPolicy
+        - !Ref BedrockKnowledgeBaseModelPolicy
+
+  BedrockKnowledgeBaseS3Policy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyName: !Sub '${ProjectName}-bedrock-kb-s3'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt DocumentBucket.Arn
+              - !Sub '${DocumentBucket.Arn}/*'
+
+  BedrockKnowledgeBaseOpenSearchPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyName: !Sub '${ProjectName}-bedrock-kb-aoss'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - aoss:APIAccessAll
+            Resource: !GetAtt OpenSearchServerlessCollection.Arn
+
+  BedrockKnowledgeBaseModelPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyName: !Sub '${ProjectName}-bedrock-kb-model'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+            Resource: !Sub 'arn:aws:bedrock:${Region}::foundation-model/amazon.titan-embed-text-v2:0'
+
+  BedrockKnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: !Sub '${ProjectName}-kb'
+      Description: RAG Knowledge Base for document Q&A
+      RoleArn: !GetAtt BedrockKnowledgeBaseRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub 'arn:aws:bedrock:${Region}::foundation-model/amazon.titan-embed-text-v2:0'
+      StorageConfiguration:
+        Type: OPENSEARCH_SERVERLESS
+        OpensearchServerlessConfiguration:
+          CollectionArn: !GetAtt OpenSearchServerlessCollection.Arn
+          VectorIndexName: !Sub '${ProjectName}-index'
+          FieldMapping:
+            VectorField: embedding
+            TextField: text
+            MetadataField: metadata
+
+  BedrockDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      Name: !Sub '${ProjectName}-s3-source'
+      KnowledgeBaseId: !Ref BedrockKnowledgeBase
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: !GetAtt DocumentBucket.Arn
+
+  # ==================== LAMBDA EXECUTION ROLE ====================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-exec'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !Ref LambdaBedrockPolicy
+        - !Ref LambdaS3Policy
+
+  LambdaBedrockPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyName: !Sub '${ProjectName}-lambda-bedrock'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-4-5-20250929-v1:0'
+              - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0'
+              - !Sub 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0'
+              - !Sub 'arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0'
+          - Effect: Allow
+            Action:
+              - bedrock:Retrieve
+            Resource: !Sub 'arn:aws:bedrock:${Region}:${AWS::AccountId}:knowledge-base/${BedrockKnowledgeBase}'
+
+  LambdaS3Policy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyName: !Sub '${ProjectName}-lambda-s3'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt DocumentBucket.Arn
+              - !Sub '${DocumentBucket.Arn}/*'
+
+  # ==================== LAMBDA LAYER ====================
+  PypdfLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub '${ProjectName}-pypdf'
+      Description: pypdf library for PDF text extraction
+      Content:
+        S3Bucket: !Ref DocumentBucket
+        S3Key: layers/pypdf.zip
+      CompatibleRuntimes:
+        - python3.12
+
+  # ==================== LAMBDA FUNCTIONS ====================
+  QAFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-qa'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref DocumentBucket
+        S3Key: lambda/qa.zip
+      Environment:
+        Variables:
+          KNOWLEDGE_BASE_ID: !Ref BedrockKnowledgeBase
+          MODEL_ID: eu.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+  SummarizeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-summarize'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 120
+      MemorySize: 1024
+      Layers:
+        - !Ref PypdfLayer
+      Code:
+        S3Bucket: !Ref DocumentBucket
+        S3Key: lambda/summarize.zip
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref DocumentBucket
+          MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+          MAX_TOKENS: '2000'
+
+  # ==================== API GATEWAY ====================
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      Description: RAG Application API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # QA Resource and Method
+  QAResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: qa
+
+  QAMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref QAResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${QAFunction.Arn}/invocations'
+
+  QALambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref QAFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${Region}:${AWS::AccountId}:${RestApi}/*/*'
+
+  # Summarize Resource and Method
+  SummarizeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: summarize
+
+  SummarizeMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref SummarizeResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${SummarizeFunction.Arn}/invocations'
+
+  SummarizeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SummarizeFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${Region}:${AWS::AccountId}:${RestApi}/*/*'
+
+  # API Gateway Deployment and Stage
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - QAMethod
+      - SummarizeMethod
+    Properties:
+      RestApiId: !Ref RestApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: prod
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref ApiDeployment
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingRateLimit: 100
+          ThrottlingBurstLimit: 1000
+
+  # API Key and Usage Plan
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: !Sub '${ProjectName}-api-key'
+      Enabled: true
+
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: !Sub '${ProjectName}-usage-plan'
+      ApiStages:
+        - ApiId: !Ref RestApi
+          Stage: !Ref ApiStage
+      Throttle:
+        RateLimit: 100
+        BurstLimit: 1000
+
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+
+Outputs:
+  DocumentBucketName:
+    Description: S3 bucket name for document storage
+    Value: !Ref DocumentBucket
+
+  OpenSearchCollectionEndpoint:
+    Description: OpenSearch Serverless collection endpoint
+    Value: !GetAtt OpenSearchServerlessCollection.CollectionEndpoint
+
+  KnowledgeBaseId:
+    Description: Bedrock Knowledge Base ID
+    Value: !Ref BedrockKnowledgeBase
+
+  DataSourceId:
+    Description: Bedrock Data Source ID
+    Value: !Ref BedrockDataSource
+
+  QAFunctionArn:
+    Description: QA Lambda Function ARN
+    Value: !GetAtt QAFunction.Arn
+
+  SummarizeFunctionArn:
+    Description: Summarize Lambda Function ARN
+    Value: !GetAtt SummarizeFunction.Arn
+
+  ApiGatewayUrl:
+    Description: API Gateway URL
+    Value: !Sub 'https://${RestApi}.execute-api.${Region}.amazonaws.com/prod'
+
+  ApiKeyId:
+    Description: API Key ID
+    Value: !Ref ApiKey
+
+  PypdfLayerArn:
+    Description: pypdf Lambda Layer ARN
+    Value: !Ref PypdfLayer
