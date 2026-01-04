@@ -1,0 +1,221 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RAG Generative AI Application - Minimal Template for Visualization'
+
+Metadata:
+  Infrastructure:
+    ManagedBy: Terraform
+    Purpose: Visualization Only
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: vitraiaws-rag
+    Description: Project name for resource naming
+
+  Region:
+    Type: String
+    Default: eu-west-1
+    Description: AWS region for deployment
+
+Resources:
+  # ==================== STORAGE ====================
+  DocumentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-documents'
+
+  # ==================== VECTOR DATABASE ====================
+  OpenSearchServerlessCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    Properties:
+      Name: !Sub '${ProjectName}-kb'
+      Type: VECTORSEARCH
+      Description: Vector database for RAG Knowledge Base
+
+  # ==================== BEDROCK KNOWLEDGE BASE ====================
+  BedrockKnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-bedrock-kb'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+
+  BedrockKnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: !Sub '${ProjectName}-kb'
+      Description: RAG Knowledge Base for document Q&A
+      RoleArn: !GetAtt BedrockKnowledgeBaseRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub 'arn:aws:bedrock:${Region}::foundation-model/amazon.titan-embed-text-v2:0'
+      StorageConfiguration:
+        Type: OPENSEARCH_SERVERLESS
+        OpensearchServerlessConfiguration:
+          CollectionArn: !GetAtt OpenSearchServerlessCollection.Arn
+          VectorIndexName: !Sub '${ProjectName}-index'
+          FieldMapping:
+            VectorField: embedding
+            TextField: text
+            MetadataField: metadata
+
+  BedrockDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      Name: !Sub '${ProjectName}-s3-source'
+      KnowledgeBaseId: !Ref BedrockKnowledgeBase
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: !GetAtt DocumentBucket.Arn
+
+  # ==================== LAMBDA FUNCTIONS ====================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-exec'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # ==================== LAMBDA LAYER ====================
+  PypdfLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub '${ProjectName}-pypdf'
+      Description: pypdf library for PDF text extraction
+      Content:
+        S3Bucket: !Ref DocumentBucket
+        S3Key: layers/pypdf.zip
+      CompatibleRuntimes:
+        - python3.12
+
+  QAFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-qa'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'QA Function'}
+      Environment:
+        Variables:
+          KNOWLEDGE_BASE_ID: !Ref BedrockKnowledgeBase
+          MODEL_ID: eu.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+  SummarizeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-summarize'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 120
+      MemorySize: 1024
+      Layers:
+        - !Ref PypdfLayer
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Summarize Function'}
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref DocumentBucket
+          MODEL_ID: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+
+  QALambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref QAFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${Region}:${AWS::AccountId}:${RestApi}/*/*'
+
+  SummarizeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SummarizeFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${Region}:${AWS::AccountId}:${RestApi}/*/*'
+
+  # ==================== API GATEWAY ====================
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      Description: RAG Application API
+
+  QAResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: qa
+
+  QAMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref QAResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${QAFunction.Arn}/invocations'
+
+  SummarizeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: summarize
+
+  SummarizeMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref SummarizeResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${SummarizeFunction.Arn}/invocations'
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - QAMethod
+      - SummarizeMethod
+    Properties:
+      RestApiId: !Ref RestApi
+
+Outputs:
+  ApiGatewayUrl:
+    Description: API Gateway URL
+    Value: !Sub 'https://${RestApi}.execute-api.${Region}.amazonaws.com/prod'
+
+  KnowledgeBaseId:
+    Description: Bedrock Knowledge Base ID
+    Value: !Ref BedrockKnowledgeBase
