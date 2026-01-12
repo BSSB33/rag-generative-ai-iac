@@ -22,6 +22,8 @@ bedrock_runtime = boto3.client('bedrock-runtime')
 S3_BUCKET = os.environ.get('S3_BUCKET')
 MODEL_ID = os.environ.get('MODEL_ID', 'eu.anthropic.claude-haiku-4-5-20251001-v1:0')
 MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '2000'))
+GUARDRAIL_ID = os.environ.get('GUARDRAIL_ID')
+GUARDRAIL_VERSION = os.environ.get('GUARDRAIL_VERSION')
 
 
 def lambda_handler(event, context):
@@ -152,9 +154,10 @@ Summary:"""
 
         logger.info(f"Generating summary with model: {MODEL_ID}")
 
-        bedrock_response = bedrock_runtime.invoke_model(
-            modelId=MODEL_ID,
-            body=json.dumps({
+        # Prepare invoke_model parameters
+        invoke_params = {
+            'modelId': MODEL_ID,
+            'body': json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": MAX_TOKENS,
                 "temperature": 0.5,
@@ -165,7 +168,15 @@ Summary:"""
                     }
                 ]
             })
-        )
+        }
+
+        # Add guardrail if configured
+        if GUARDRAIL_ID and GUARDRAIL_VERSION:
+            invoke_params['guardrailIdentifier'] = GUARDRAIL_ID
+            invoke_params['guardrailVersion'] = GUARDRAIL_VERSION
+            logger.info(f"Applying guardrail: {GUARDRAIL_ID} v{GUARDRAIL_VERSION}")
+
+        bedrock_response = bedrock_runtime.invoke_model(**invoke_params)
 
         response_body = json.loads(bedrock_response['body'].read())
         summary = response_body['content'][0]['text']

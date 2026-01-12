@@ -57,6 +57,13 @@ resource "aws_iam_policy" "lambda_bedrock" {
           "bedrock:Retrieve"
         ]
         Resource = "arn:aws:bedrock:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:knowledge-base/${var.knowledge_base_id}"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "bedrock:ApplyGuardrail"
+        ]
+        Resource = "arn:aws:bedrock:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:guardrail/${var.guardrail_id}"
       }
     ]
   })
@@ -122,6 +129,8 @@ resource "aws_lambda_function" "qa" {
     variables = {
       KNOWLEDGE_BASE_ID = var.knowledge_base_id
       MODEL_ID          = "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
+      GUARDRAIL_ID      = var.guardrail_id
+      GUARDRAIL_VERSION = var.guardrail_version
     }
   }
 
@@ -144,9 +153,11 @@ resource "aws_lambda_function" "summarize" {
 
   environment {
     variables = {
-      S3_BUCKET  = var.s3_bucket_name
-      MODEL_ID   = "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
-      MAX_TOKENS = "2000"
+      S3_BUCKET         = var.s3_bucket_name
+      MODEL_ID          = "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+      MAX_TOKENS        = "2000"
+      GUARDRAIL_ID      = var.guardrail_id
+      GUARDRAIL_VERSION = var.guardrail_version
     }
   }
 

@@ -22,3 +22,13 @@ variable "data_source_id" {
   description = "Knowledge Base data source ID"
   type        = string
 }
+
+variable "guardrail_id" {
+  description = "Bedrock Guardrail ID"
+  type        = string
+}
+
+variable "guardrail_version" {
+  description = "Bedrock Guardrail version"
+  type        = string
+}

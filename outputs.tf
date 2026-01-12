@@ -58,6 +58,17 @@ output "api_key" {
   sensitive   = true
 }
 
+# Guardrails Outputs
+output "guardrail_id" {
+  description = "ID of the Bedrock Guardrail"
+  value       = module.guardrails.guardrail_id
+}
+
+output "guardrail_arn" {
+  description = "ARN of the Bedrock Guardrail"
+  value       = module.guardrails.guardrail_arn
+}
+
 # Usage Instructions
 output "usage_instructions" {
   description = "Quick start instructions"
@@ -70,6 +81,7 @@ output "usage_instructions" {
   S3 Bucket: ${module.storage.bucket_name}
   Knowledge Base ID: ${module.knowledge_base.knowledge_base_id}
   API Endpoint: ${module.api_gateway.api_endpoint}
+  Guardrail ID: ${module.guardrails.guardrail_id}
 
   Get your API key:
     terraform output -raw api_key
@@ -88,6 +100,43 @@ output "usage_instructions" {
 
   Demo PDFs uploaded: 4 Mars travel documents
   Sync status: Check ingestion job completion (~2-5 minutes)
+
+  ========================================
+  EOT
+}
+
+# Guardrails Test Examples
+output "guardrails_test_examples" {
+  description = "Test examples for validating guardrails"
+  value = <<-EOT
+
+  ========================================
+  Guardrails Test Examples
+  ========================================
+
+  ✓ GOOD PROMPT (Should Work):
+
+  curl -X POST ${module.api_gateway.qa_endpoint} \
+    -H "x-api-key: YOUR_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"question": "What documents do I need to prepare for my Mars travel visa application?"}'
+
+  ✗ REJECTED - Legal Advice (Topic Guardrail):
+
+  curl -X POST ${module.api_gateway.qa_endpoint} \
+    -H "x-api-key: YOUR_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"question": "What are my legal rights if the Mars immigration office denies my visa application?"}'
+
+  ✗ REJECTED - Medical Advice (Topic Guardrail):
+
+  curl -X POST ${module.api_gateway.qa_endpoint} \
+    -H "x-api-key: YOUR_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"question": "What vaccines and medications should I take before traveling to Mars?"}'
+
+  Expected blocked response:
+  "I cannot answer that question as it violates our content policy."
 
   ========================================
   EOT
