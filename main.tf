@@ -15,6 +15,18 @@ module "knowledge_base" {
   depends_on = [module.storage]
 }
 
+# Module: Bedrock Guardrails
+module "guardrails" {
+  source = "./modules/guardrails"
+
+  guardrail_name = "${var.project_name}-guardrails"
+  description    = "Content filtering and topic restrictions for Mars travel Q&A system"
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
 # Module: Lambda Functions
 module "lambda_functions" {
   source = "./modules/lambda-functions"
@@ -24,8 +36,10 @@ module "lambda_functions" {
   s3_bucket_arn     = module.storage.bucket_arn
   knowledge_base_id = module.knowledge_base.knowledge_base_id
   data_source_id    = module.knowledge_base.data_source_id
+  guardrail_id      = module.guardrails.guardrail_id
+  guardrail_version = module.guardrails.guardrail_version
 
-  depends_on = [module.knowledge_base]
+  depends_on = [module.knowledge_base, module.guardrails]
 }
 
 # Module: API Gateway

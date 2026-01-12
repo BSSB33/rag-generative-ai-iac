@@ -19,6 +19,8 @@ bedrock_runtime = boto3.client('bedrock-runtime')
 # Environment variables
 KNOWLEDGE_BASE_ID = os.environ.get('KNOWLEDGE_BASE_ID')
 MODEL_ID = os.environ.get('MODEL_ID', 'eu.anthropic.claude-sonnet-4-5-20250929-v1:0')
+GUARDRAIL_ID = os.environ.get('GUARDRAIL_ID')
+GUARDRAIL_VERSION = os.environ.get('GUARDRAIL_VERSION')
 
 
 def lambda_handler(event, context):
@@ -128,9 +130,10 @@ Please provide a clear, concise answer based on the context above. If the contex
 
         logger.info(f"Generating answer with model: {MODEL_ID}")
 
-        bedrock_response = bedrock_runtime.invoke_model(
-            modelId=MODEL_ID,
-            body=json.dumps({
+        # Prepare invoke_model parameters
+        invoke_params = {
+            'modelId': MODEL_ID,
+            'body': json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": 1000,
                 "temperature": 0.7,
@@ -141,7 +144,15 @@ Please provide a clear, concise answer based on the context above. If the contex
                     }
                 ]
             })
-        )
+        }
+
+        # Add guardrail if configured
+        if GUARDRAIL_ID and GUARDRAIL_VERSION:
+            invoke_params['guardrailIdentifier'] = GUARDRAIL_ID
+            invoke_params['guardrailVersion'] = GUARDRAIL_VERSION
+            logger.info(f"Applying guardrail: {GUARDRAIL_ID} v{GUARDRAIL_VERSION}")
+
+        bedrock_response = bedrock_runtime.invoke_model(**invoke_params)
 
         response_body = json.loads(bedrock_response['body'].read())
         answer = response_body['content'][0]['text']

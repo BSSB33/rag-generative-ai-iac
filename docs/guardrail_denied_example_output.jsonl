@@ -1,0 +1,48 @@
+{"question": "What are my legal rights if the Mars immigration office denies my visa application?", "max_results": 5}
+{
+    "answer": "I cannot answer that question as it violates our content policy.",
+    "sources": [
+        {
+            "document": 1,
+            "score": 0.46830863,
+            "location": {
+                "s3Location": {
+                    "uri": "s3://vitraiaws-rag-documents/Visa Requirements for Mars Travelers.pdf"
+                },
+                "type": "S3"
+            }
+        },
+        {
+            "document": 2,
+            "score": 0.42985004,
+            "location": {
+                "s3Location": {
+                    "uri": "s3://vitraiaws-rag-documents/Travel Restrictions to Mars.pdf"
+                },
+                "type": "S3"
+            }
+        },
+        {
+            "document": 3,
+            "score": 0.4053753,
+            "location": {
+                "s3Location": {
+                    "uri": "s3://vitraiaws-rag-documents/Internal Company Travel Policies for Mars Mission.pdf"
+                },
+                "type": "S3"
+            }
+        },
+        {
+            "document": 4,
+            "score": 0.37266192,
+            "location": {
+                "s3Location": {
+                    "uri": "s3://vitraiaws-rag-documents/Itinerary Details for Mars Adventure.pdf"
+                },
+                "type": "S3"
+            }
+        }
+    ],
+    "question": "What are my legal rights if the Mars immigration office denies my visa application?",
+    "documentsRetrieved": 4
+}

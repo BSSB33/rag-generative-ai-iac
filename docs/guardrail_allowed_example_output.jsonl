@@ -1,0 +1,48 @@
+{"question": "What are the visa requirements for Mars?", "max_results": 5}
+{
+    "answer": "Based on the context provided, the visa requirements for Mars travelers include:\n\n1. **Valid Earth Passport** - Must have an expiry date extending beyond your return to Earth (in case of unexpected solar storms)\n\n2. **Proof of Galactic Citizenship** - A signed declaration confirming you are from Earth or a certified terrestrial colony\n\n3. **Martian Language Proficiency Test** - Must demonstrate basic phrases like \"Take me to your leader\" and \"Where's the nearest crater caf\u00e9?\"\n\n4. **Alien Abduction Insurance** - Required for peace of mind, though Martian abductions are rare (1 in 10 million tourists)\n\nThe document also mentions a \"pro tip\" that processing can be expedited by offering Earth chocolate to the Martian consulate.",
+    "sources": [
+        {
+            "document": 1,
+            "score": 0.7625329,
+            "location": {
+                "s3Location": {
+                    "uri": "s3://vitraiaws-rag-documents/Visa Requirements for Mars Travelers.pdf"
+                },
+                "type": "S3"
+            }
+        },
+        {
+            "document": 2,
+            "score": 0.5557398,
+            "location": {
+                "s3Location": {
+                    "uri": "s3://vitraiaws-rag-documents/Travel Restrictions to Mars.pdf"
+                },
+                "type": "S3"
+            }
+        },
+        {
+            "document": 3,
+            "score": 0.46626627,
+            "location": {
+                "s3Location": {
+                    "uri": "s3://vitraiaws-rag-documents/Internal Company Travel Policies for Mars Mission.pdf"
+                },
+                "type": "S3"
+            }
+        },
+        {
+            "document": 4,
+            "score": 0.42427105,
+            "location": {
+                "s3Location": {
+                    "uri": "s3://vitraiaws-rag-documents/Itinerary Details for Mars Adventure.pdf"
+                },
+                "type": "S3"
+            }
+        }
+    ],
+    "question": "What are the visa requirements for Mars?",
+    "documentsRetrieved": 4
+}
